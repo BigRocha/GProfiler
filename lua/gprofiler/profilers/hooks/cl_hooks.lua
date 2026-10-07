@@ -75,7 +75,7 @@ function GProfiler.Hooks.DoTab(Base, Outer)
 	end
 
 	local Header = GProfiler.Utils.SetupHeader(Results, "Profiler Results", nil, true)
-	local ResultsList = GProfiler.Utils.CreateList(Results, Header, {"Hook", "Count", "Time (Total)", "Time (Avg)", "Time (Longest)"})
+	local ResultsList = GProfiler.Utils.CreateList(Results, Header, {"Hook", "Count", "Time (Total)", "Time (Avg)", "Time (Longest)"}) -- FIXME: longest is just a complete lie, yeah.. alright sure
 
 	local function PopulateResults()
 		if not IsValid(ResultsList) then return end
