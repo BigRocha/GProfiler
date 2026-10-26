@@ -5,16 +5,22 @@
 #include <unordered_map>
 #include <cstddef>
 
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#elif defined(__linux__)
+#include <dlfcn.h>
+#else
+#error "GProfiler currently supports Windows and Linux builds only"
+#endif
 
 using namespace GarrysMod::Lua;
 
 extern "C" {
-	typedef void (*profile_callback)(void *data, void *L, int samples, int vmstate);
-	typedef void (*fn_profile_start)(void *L, const char *mode, profile_callback cb, void *data);
-	typedef void (*fn_profile_stop)(void *L);
-	typedef const char *(*fn_profile_dumpstack)(void *L, const char *fmt, int depth, size_t *len);
+	typedef void (*profile_callback)(void *data, lua_State *L, int samples, int vmstate);
+	typedef void (*fn_profile_start)(lua_State *L, const char *mode, profile_callback cb, void *data);
+	typedef void (*fn_profile_stop)(lua_State *L);
+	typedef const char *(*fn_profile_dumpstack)(lua_State *L, const char *fmt, int depth, size_t *len);
 }
 
 static fn_profile_start g_start = nullptr;
@@ -32,9 +38,37 @@ static std::string g_dumpfmt = "l;";
 static int g_depth = 60;
 
 static void *ResolveSymbol(const char *name) {
+#if defined(_WIN32)
 	HMODULE mod = GetModuleHandleA("lua_shared.dll");
 	if (!mod) return nullptr;
 	return reinterpret_cast<void *>(GetProcAddress(mod, name));
+#elif defined(__linux__)
+#if defined(__x86_64__)
+	static const char *const module_paths[] = {
+		"bin/linux64/lua_shared.so",
+		"bin/linux64/lua_shared_client.so"
+	};
+#elif defined(__i386__)
+	static const char *const module_paths[] = {
+		"garrysmod/bin/lua_shared_srv.so",
+		"garrysmod/bin/lua_shared.so",
+		"bin/linux32/lua_shared.so",
+		"bin/linux32/lua_shared_client.so"
+	};
+#else
+	return nullptr;
+#endif
+
+	for (const char *path : module_paths) {
+		void *mod = dlopen(path, RTLD_LAZY | RTLD_NOLOAD);
+		if (!mod) continue;
+
+		void *symbol = dlsym(mod, name);
+		dlclose(mod);
+		if (symbol) return symbol;
+	}
+	return nullptr;
+#endif
 }
 
 static void LoadProfilerAPI() {
@@ -47,7 +81,7 @@ static bool ProfilerAvailable() {
 	return g_start && g_stop && g_dumpstack;
 }
 
-static void ProfileCallback(void *data, void *L, int samples, int vmstate) {
+static void ProfileCallback(void *, lua_State *L, int samples, int vmstate) {
 	g_total += static_cast<unsigned int>(samples);
 	g_vmstates[static_cast<char>(vmstate)] += static_cast<unsigned int>(samples);
 
@@ -167,7 +201,7 @@ extern "C" GMOD_DLL_EXPORT int gmod13_open(lua_State *L) {
 	return 0;
 }
 
-extern "C" GMOD_DLL_EXPORT int gmod13_close(lua_State *L) {
+extern "C" GMOD_DLL_EXPORT int gmod13_close(lua_State *) {
 	if (g_running && g_stop) {
 		g_stop(g_state);
 		g_running = false;

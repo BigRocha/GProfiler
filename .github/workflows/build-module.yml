@@ -12,7 +12,7 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  build-windows:
     runs-on: windows-latest
     defaults:
       run:
@@ -55,12 +55,70 @@ jobs:
           $dlls | ForEach-Object { Copy-Item $_.FullName -Destination dist }
           Get-ChildItem dist
 
-      - name: Package addon
+      - name: Upload Windows binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: gprofiler-windows
+          path: dist/*.dll
+
+  build-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Clone garrysmod_common
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          $zip = "dist/GProfiler-${{ inputs.version }}.zip"
-          Compress-Archive -Path lua,materials,resource -DestinationPath $zip -Force
-          Get-ChildItem dist
+          git clone --branch x86-64-support-sourcesdk --recurse-submodules --depth 1 \
+            https://github.com/danielga/garrysmod_common.git module/garrysmod_common
+
+      - name: Download premake
+        run: |
+          curl -L \
+            https://github.com/premake/premake-core/releases/download/v5.0.0-beta8/premake-5.0.0-beta8-linux.tar.gz \
+            -o premake.tar.gz
+          mkdir premake
+          tar -xzf premake.tar.gz -C premake
+          chmod +x premake/premake5
+
+      - name: Generate project files
+        working-directory: module
+        run: ../premake/premake5 --gmcommon=garrysmod_common gmake
+
+      - name: Build
+        run: make -C module/projects/linux/gmake config=release_x86_64 -j"$(nproc)"
+
+      - name: Collect binaries
+        run: |
+          mkdir -p dist
+          find module -type f \( -name gmsv_gprofiler_linux64.dll -o -name gmcl_gprofiler_linux64.dll \) -exec cp {} dist/ \;
+          test -n "$(find dist -maxdepth 1 -type f -name '*_linux64.dll' -print -quit)"
+          ls -l dist
+
+      - name: Upload Linux binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: gprofiler-linux64
+          path: dist/*_linux64.dll
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: gprofiler-*
+          path: dist
+          merge-multiple: true
+
+      - name: Package addon
+        run: zip -r "dist/GProfiler-${{ inputs.version }}.zip" lua materials resource
 
       - name: Release
         uses: softprops/action-gh-release@v2
@@ -68,5 +126,4 @@ jobs:
           tag_name: ${{ inputs.version }}
           name: ${{ inputs.version }}
           files: |
-            dist/*.dll
-            dist/*.zip
+            dist/*
